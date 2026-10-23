@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Melgas de alfalfa</title>
+<style>
+:root{--bg:#f4f6f1;--fg:#1d2a1a;--card:#fff;--ac:#2e7d32;--bad:#c62828;--mut:#6b7a66;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121a11;--fg:#e6efe3;--card:#1c271a;--ac:#66bb6a;--bad:#ef9a9a;--mut:#93a58f}}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,Segoe UI,sans-serif}
+body{padding:10px;max-width:640px;margin:auto}
+.card{background:var(--card);border-radius:14px;padding:10px;margin-bottom:10px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button{flex:1;min-width:46%;padding:14px 8px;border:0;border-radius:12px;background:var(--ac);color:#fff;font-size:16px;font-weight:600}
+button.s{background:var(--mut)}
+label{font-size:13px;color:var(--mut);flex:1}input{width:100%;padding:8px;font-size:16px;border-radius:8px;border:1px solid var(--mut);background:var(--bg);color:var(--fg)}
+#g{text-align:center}#big{font-size:44px;font-weight:800;line-height:1.1}#sub{color:var(--mut);font-size:14px}
+canvas{width:100%;height:300px;border-radius:10px;background:var(--bg);display:block}
+.ok{color:var(--ac)}.off{color:var(--bad)}
+</style></head><body>
+<div class="card" id="g"><div id="big">—</div><div id="sub">Esperando GPS…</div></div>
+<div class="card"><canvas id="c" width="600" height="600"></canvas></div>
+<div class="card">
+<div class="row"><label>Ancho de corte (m)<input id="w" type="number" step="0.01" value="2.45"></label>
+<label>Pasadas por melga<input id="n" type="number" value="15"></label></div>
+<div id="sp" style="margin:6px 0;font-size:14px"></div>
+<div class="row"><button id="add">📍 Marcar punto</button><button id="undo" class="s">Borrar último</button>
+<button id="close">✔ Cerrar contorno</button><button id="reset" class="s">Nuevo campo</button></div></div>
+<div class="card"><div class="row"><button id="prev" class="s">◀ Línea</button><button id="next">Línea ▶</button>
+<button id="auto" class="s">Línea: automática</button></div></div>
+<script>
+var pts=[],closed=false,pos=null,hd=null,last=null,k=0,auto=true,spacing=36.75,$=function(i){return document.getElementById(i)};
+function save(){try{localStorage.setItem('melgas',JSON.stringify({pts:pts,closed:closed,w:$('w').value,n:$('n').value}))}catch(e){}}
+function load(){try{var d=JSON.parse(localStorage.getItem('melgas')||'null');if(d){pts=d.pts||[];closed=!!d.closed;$('w').value=d.w||2.45;$('n').value=d.n||15}}catch(e){}}
+function ll2xy(la,lo){if(!pts.length)return[0,0];var o=pts[0];return[(lo-o.lo)*111320*Math.cos(o.la*Math.PI/180),(la-o.la)*110540]}
+function poly(){return pts.map(function(p){return ll2xy(p.la,p.lo)})}
+function geo(){var P=poly();if(P.length<2)return null;var dx=P[1][0]-P[0][0],dy=P[1][1]-P[0][1],L=Math.hypot(dx,dy);if(L<1)return null;
+var d=[dx/L,dy/L],n=[-d[1],d[0]];var cx=0,cy=0;P.forEach(function(p){cx+=p[0];cy+=p[1]});cx/=P.length;cy/=P.length;
+if(cx*n[0]+cy*n[1]<0)n=[-n[0],-n[1]];var smax=0;P.forEach(function(p){smax=Math.max(smax,p[0]*n[0]+p[1]*n[1])});
+return{P:P,d:d,n:n,smax:smax,cnt:Math.floor(smax/spacing)+1}}
+function upd(){var w=parseFloat($('w').value)||0,n=parseInt($('n').value)||0;spacing=w*n;$('sp').innerHTML='Líneas cada <b>'+spacing.toFixed(2)+' m</b> ('+n+' × '+w+' m)';save()}
+function clipLine(G,s){var out=[];var P=G.P,m=P.length;for(var i=0;i<m;i++){var a=P[i],b=P[(i+1)%m];
+var sa=a[0]*G.n[0]+a[1]*G.n[1]-s,sb=b[0]*G.n[0]+b[1]*G.n[1]-s;if(sa*sb<=0&&sa!==sb){var t=sa/(sa-sb),x=a[0]+t*(b[0]-a[0]),y=a[1]+t*(b[1]-a[1]);out.push([x,y,x*G.d[0]+y*G.d[1]])}}
+if(out.length<2)return null;out.sort(function(u,v){return u[2]-v[2]});return[out[0],out[out.length-1]]}
+function draw(){var G=closed?geo():null,cv=$('c'),x=cv.getContext('2d'),W=cv.width,H=cv.height;x.clearRect(0,0,W,H);
+var P=poly();if(pos)P=P.concat([ll2xy(pos.la,pos.lo)]);if(!P.length)return;
+var x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;P.forEach(function(p){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0]);y0=Math.min(y0,p[1]);y1=Math.max(y1,p[1])});
+var sc=Math.min((W-60)/Math.max(x1-x0,5),(H-60)/Math.max(y1-y0,5));function T(p){return[30+(p[0]-x0)*sc,H-30-(p[1]-y0)*sc]}
+var C=poly();x.lineWidth=3;x.strokeStyle='#2e7d32';x.beginPath();C.forEach(function(p,i){var q=T(p);i?x.lineTo(q[0],q[1]):x.moveTo(q[0],q[1])});if(closed)x.closePath();x.stroke();
+C.forEach(function(p,i){var q=T(p);x.fillStyle='#2e7d32';x.beginPath();x.arc(q[0],q[1],5,0,7);x.fill();x.fillStyle='#888';x.font='20px sans-serif';x.fillText(i+1,q[0]+7,q[1]-7)});
+if(G){for(var j=0;j<G.cnt;j++){var seg=clipLine(G,j*spacing);if(!seg)continue;var a=T(seg[0]),b=T(seg[1]);x.lineWidth=j===k?5:1.5;x.strokeStyle=j===k?'#ff9800':'#9e9e9e';x.beginPath();x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1]);x.stroke()}}
+if(pos){var u=T(ll2xy(pos.la,pos.lo));x.fillStyle='#1976d2';x.beginPath();x.arc(u[0],u[1],9,0,7);x.fill()}}
+function guide(){var big=$('big'),sub=$('sub');if(!pos){return}
+if(!closed||!geo()){big.textContent=closed?'Faltan puntos':'Marcando contorno';sub.textContent='Puntos: '+pts.length+' · precisión ±'+Math.round(pos.ac)+' m. Caminá/manejá el borde y marcá cada esquina (el 1.º y 2.º punto definen la dirección de las líneas).';return}
+var G=geo(),p=ll2xy(pos.la,pos.lo),s=p[0]*G.n[0]+p[1]*G.n[1];
+if(auto){k=Math.max(0,Math.min(G.cnt-1,Math.round(s/spacing)))}
+var e=s-k*spacing,v=[-e*G.n[0],-e*G.n[1]];
+var h=hd?[Math.sin(hd*Math.PI/180),Math.cos(hd*Math.PI/180)]:G.d;
+var cr=h[0]*v[1]-h[1]*v[0],ae=Math.abs(e);
+big.className=ae<0.5?'ok':(ae>2?'off':'');
+big.textContent=ae<0.5?'✔ EN LÍNEA':(cr>0?'◀ ':'')+ae.toFixed(1)+' m'+(cr>0?'':' ▶');
+sub.textContent='Línea '+(k+1)+' de '+G.cnt+' · '+(hd?'rumbo GPS':'rumbo sin movimiento: avanzá para orientar')+' · ±'+Math.round(pos.ac)+' m'}
+function all(){upd();guide();draw()}
+function onPos(r){var c=r.coords,np={la:c.latitude,lo:c.longitude,ac:c.accuracy};
+if(c.heading!=null&&!isNaN(c.heading)&&(c.speed||0)>0.5)hd=c.heading;
+else if(last){var a=ll2xy(last.la,last.lo),b=ll2xy(np.la,np.lo);if(pts.length&&Math.hypot(b[0]-a[0],b[1]-a[1])>2){hd=(Math.atan2(b[0]-a[0],b[1]-a[1])*180/Math.PI+360)%360;last=np}}
+if(!last)last=np;pos=np;all()}
+if(navigator.geolocation)navigator.geolocation.watchPosition(onPos,function(e){$('sub').textContent='Error GPS: '+e.message},{enableHighAccuracy:true,maximumAge:0,timeout:20000});
+else $('sub').textContent='Este navegador no tiene GPS';
+$('add').onclick=function(){if(!pos)return alert('Todavía no hay señal GPS');if(closed)return;pts.push({la:pos.la,lo:pos.lo});all()};
+$('undo').onclick=function(){if(!closed){pts.pop();all()}};
+$('close').onclick=function(){if(pts.length<3)return alert('Marcá al menos 3 puntos');closed=true;auto=true;all()};
+$('reset').onclick=function(){if(confirm('¿Borrar el campo actual?')){pts=[];closed=false;k=0;all()}};
+$('next').onclick=function(){auto=false;$('auto').textContent='Línea: manual';var G=geo();if(G)k=Math.min(G.cnt-1,k+1);all()};
+$('prev').onclick=function(){auto=false;$('auto').textContent='Línea: manual';k=Math.max(0,k-1);all()};
+$('auto').onclick=function(){auto=!auto;$('auto').textContent=auto?'Línea: automática':'Línea: manual';all()};
+$('w').oninput=$('n').oninput=all;
+load();all();
+</script></body></html>
